@@ -585,7 +585,17 @@ async def ask_question(
         
         # Build personalized query with student context
         if user and user.student_id:
-            logger.info(f"� Authenticated Student: {user.full_name} (ID: {user.student_id})")
+            logger.info(f"👤 Authenticated Student: {user.full_name} (ID: {user.student_id})")
+            
+            # Build conversation context if history exists
+            conversation_context = ""
+            if question.conversation_history:
+                logger.info(f"💬 Conversation history: {len(question.conversation_history)} messages")
+                conversation_context = "\n\n=== CONVERSATION HISTORY ===\n"
+                for msg in question.conversation_history[-6:]:  # Last 6 messages (3 exchanges)
+                    role = "Student" if msg.get("role") == "user" else "Assistant"
+                    conversation_context += f"{role}: {msg.get('content', '')}\n"
+                conversation_context += "=== END OF HISTORY ===\n\n"
             
             # Inject student context into query
             personalized_query = f"""Student Information:
@@ -594,13 +604,35 @@ async def ask_question(
 - Student ID: {user.student_id}
 - Semester: {user.student_data.get('semester', 'Unknown')}
 - Department: {user.student_data.get('department', 'Unknown')}
+{conversation_context}
+CURRENT QUESTION: {question.query}
 
-Student Question: {question.query}
+IMPORTANT INSTRUCTIONS:
+1. Read the conversation history carefully to understand the context
+2. This is a FOLLOW-UP question if conversation history exists
+3. The current question likely refers to the topic discussed above
+4. For student-specific queries (attendance, marks, fees, timetable, library), use the student's ID: {user.student_id}
+5. For general queries (events, knowledge), DO NOT pass student_id - these tools don't require it
+6. Provide contextual responses based on what was discussed previously
+7. Be concise and friendly - don't repeat greetings if already in conversation
 
-Instructions: Use the student's ID when calling tools that require student_id. Provide personalized, contextual responses."""
+Example: If the student asked "What's my attendance?" and then asks "how many do I need to get to 90", 
+they are asking about attendance (how many more classes to reach 90%), NOT about marks or CGPA."""
         else:
             logger.info("🌍 Anonymous/Admin User - General query")
-            personalized_query = question.query
+            
+            # Build conversation context for anonymous users too
+            conversation_context = ""
+            if question.conversation_history:
+                logger.info(f"💬 Conversation history: {len(question.conversation_history)} messages")
+                conversation_context = "Previous Conversation:\n"
+                for msg in question.conversation_history[-6:]:  # Last 6 messages
+                    role = "User" if msg.get("role") == "user" else "Assistant"
+                    conversation_context += f"{role}: {msg.get('content', '')}\n"
+                conversation_context += f"\nCurrent Question: {question.query}"
+                personalized_query = conversation_context
+            else:
+                personalized_query = question.query
         
         logger.info("=" * 80)
         
@@ -624,7 +656,8 @@ Instructions: Use the student's ID when calling tools that require student_id. P
         
         # Query the super smart agent
         logger.info(f"🚀 Calling agent.query() with student_context: {student_context is not None}")
-        response = await agent.query(question.query, student_context)
+        # Use personalized_query (includes conversation history) instead of question.query
+        response = await agent.query(personalized_query, student_context)
         answer_text = str(response)
         
         logger.info("=" * 80)
@@ -698,6 +731,10 @@ from api.admin_routes import router as admin_management_router
 app.include_router(admin_auth_router)
 app.include_router(admin_dashboard_router)
 app.include_router(admin_management_router)
+
+# Register student routes
+from api.student_routes import router as student_router
+app.include_router(student_router)
 
 
 # ==================== MAIN ====================

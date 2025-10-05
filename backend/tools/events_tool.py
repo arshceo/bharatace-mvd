@@ -5,7 +5,7 @@ Manages college events, registrations, and participation.
 
 from typing import Dict, Any, List, Optional
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from database import get_supabase_admin
 import uuid
 
@@ -14,21 +14,28 @@ logger = logging.getLogger(__name__)
 
 def get_upcoming_events(days_ahead: int = 30, event_type: Optional[str] = None) -> Dict[str, Any]:
     """
-    Get upcoming events in the next N days.
+    Get upcoming college events, workshops, hackathons, seminars, etc.
+    This is a PUBLIC tool - does NOT require student_id.
+    
+    Use this for queries like:
+    - "Any events around?"
+    - "Show me workshops"
+    - "Upcoming hackathons?"
+    - "What events are happening this week?"
     
     Args:
         days_ahead: Number of days to look ahead (default 30)
-        event_type: Optional filter by event type
+        event_type: Optional filter - use "workshop", "seminar", "hackathon", "cultural", "sports", "technical"
         
     Returns:
-        Dictionary containing upcoming events
+        Dictionary containing upcoming events categorized by date
     """
     try:
         supabase = get_supabase_admin()
         
-        # Calculate date range
-        today = datetime.now().isoformat()
-        future_date = (datetime.now() + timedelta(days=days_ahead)).isoformat()
+        # Calculate date range with timezone-aware datetime
+        today = datetime.now(timezone.utc).isoformat()
+        future_date = (datetime.now(timezone.utc) + timedelta(days=days_ahead)).isoformat()
         
         # Build query
         query = supabase.table("events")\
@@ -52,12 +59,25 @@ def get_upcoming_events(days_ahead: int = 30, event_type: Optional[str] = None) 
             "later": []
         }
         
-        now = datetime.now()
+        # Use timezone-aware datetime to match database format
+        now = datetime.now(timezone.utc)
         week_end = now + timedelta(days=7)
         month_end = now + timedelta(days=30)
         
         for event in events:
-            event_date = datetime.fromisoformat(event['start_date'])
+            # Parse timezone-aware datetime from database
+            event_date_str = event['start_date']
+            if isinstance(event_date_str, str):
+                # Remove 'Z' suffix and add '+00:00' for UTC
+                if event_date_str.endswith('Z'):
+                    event_date_str = event_date_str[:-1] + '+00:00'
+                event_date = datetime.fromisoformat(event_date_str)
+            else:
+                event_date = event_date_str
+            
+            # Ensure event_date is timezone-aware
+            if event_date.tzinfo is None:
+                event_date = event_date.replace(tzinfo=timezone.utc)
             
             if event_date.date() == now.date():
                 categorized["today"].append(event)
@@ -128,8 +148,14 @@ def get_event_details(event_id: str) -> Dict[str, Any]:
         registration_message = "Registration is open"
         
         if event.get('registration_deadline'):
-            deadline = datetime.fromisoformat(event['registration_deadline'])
-            if datetime.now() > deadline:
+            deadline_str = event['registration_deadline']
+            if deadline_str.endswith('Z'):
+                deadline_str = deadline_str[:-1] + '+00:00'
+            deadline = datetime.fromisoformat(deadline_str)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            
+            if datetime.now(timezone.utc) > deadline:
                 registration_open = False
                 registration_message = "Registration deadline has passed"
         
@@ -223,7 +249,7 @@ def register_for_event(student_id: str, event_id: str) -> Dict[str, Any]:
             "id": str(uuid.uuid4()),
             "event_id": event_id,
             "student_id": student_id,
-            "registration_date": datetime.now().isoformat(),
+            "registration_date": datetime.now(timezone.utc).isoformat(),
             "attendance_status": "registered"
         }
         
@@ -284,16 +310,21 @@ def get_student_events(student_id: str, include_past: bool = False) -> Dict[str,
         
         registrations = response.data
         
-        # Filter and categorize
+        # Filter and categorize with timezone-aware datetime
         upcoming = []
         past = []
         cancelled = []
         
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         for registration in registrations:
             event = registration['events']
-            event_date = datetime.fromisoformat(event['start_date'])
+            event_date_str = event['start_date']
+            if event_date_str.endswith('Z'):
+                event_date_str = event_date_str[:-1] + '+00:00'
+            event_date = datetime.fromisoformat(event_date_str)
+            if event_date.tzinfo is None:
+                event_date = event_date.replace(tzinfo=timezone.utc)
             
             if registration['attendance_status'] == 'cancelled':
                 cancelled.append(registration)
@@ -357,9 +388,15 @@ def cancel_event_registration(student_id: str, event_id: str) -> Dict[str, Any]:
         registration = registration_response.data[0]
         event = registration['events']
         
-        # Check if event has already started
-        event_date = datetime.fromisoformat(event['start_date'])
-        if datetime.now() >= event_date:
+        # Check if event has already started (with timezone-aware comparison)
+        event_date_str = event['start_date']
+        if event_date_str.endswith('Z'):
+            event_date_str = event_date_str[:-1] + '+00:00'
+        event_date = datetime.fromisoformat(event_date_str)
+        if event_date.tzinfo is None:
+            event_date = event_date.replace(tzinfo=timezone.utc)
+        
+        if datetime.now(timezone.utc) >= event_date:
             return {
                 "success": False,
                 "message": "Cannot cancel registration. Event has already started or ended."
@@ -415,7 +452,7 @@ def search_events(
             search_query = search_query.eq("event_type", event_type)
         
         if upcoming_only:
-            search_query = search_query.gte("start_date", datetime.now().isoformat())
+            search_query = search_query.gte("start_date", datetime.now(timezone.utc).isoformat())
         
         response = search_query.limit(20).execute()
         

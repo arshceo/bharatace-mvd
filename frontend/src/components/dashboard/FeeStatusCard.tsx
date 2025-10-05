@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { apiClient } from '@/lib/api';
 
 interface FeeData {
   total_amount: number;
@@ -16,6 +17,7 @@ export default function FeeStatusCard() {
   const { token, user } = useAuth();
   const [feeData, setFeeData] = useState<FeeData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchFeeStatus = async () => {
@@ -25,17 +27,47 @@ export default function FeeStatusCard() {
       }
 
       try {
-        // Placeholder data
-        setFeeData({
-          total_amount: 50000,
-          paid_amount: 48000,
-          pending_amount: 2000,
-          status: 'partial',
-          late_fee: 0,
-          due_date: '2025-11-15',
-        });
-      } catch (error) {
+        const response = await apiClient.fees.getStatus();
+        const data = response.data;
+        
+        // Handle both single fee object and array of fees
+        const feeRecord = Array.isArray(data) ? data[0] : data;
+        
+        if (feeRecord) {
+          const totalAmount = feeRecord.total_amount || 0;
+          const paidAmount = feeRecord.paid_amount || 0;
+          
+          setFeeData({
+            total_amount: totalAmount,
+            paid_amount: paidAmount,
+            pending_amount: totalAmount - paidAmount,
+            status: feeRecord.status || 'pending',
+            late_fee: feeRecord.late_fee || 0,
+            due_date: feeRecord.due_date || new Date().toISOString(),
+          });
+        } else {
+          // No fee record found
+          setFeeData({
+            total_amount: 0,
+            paid_amount: 0,
+            pending_amount: 0,
+            status: 'paid',
+            late_fee: 0,
+            due_date: new Date().toISOString(),
+          });
+        }
+      } catch (error: any) {
         console.error('Error fetching fee status:', error);
+        setError(error.response?.data?.detail || 'Failed to load fee data');
+        // Set default values on error
+        setFeeData({
+          total_amount: 0,
+          paid_amount: 0,
+          pending_amount: 0,
+          status: 'unknown',
+          late_fee: 0,
+          due_date: new Date().toISOString(),
+        });
       } finally {
         setLoading(false);
       }

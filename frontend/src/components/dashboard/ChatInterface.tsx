@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { apiClient } from '@/lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -27,8 +28,15 @@ export default function ChatInterface() {
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    // Only auto-scroll when a new message is added by the AI
+    // Don't scroll when user is typing or submitting
+    if (messages.length > 0 && !loading) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage.role === 'assistant') {
+        scrollToBottom();
+      }
+    }
+  }, [messages, loading]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,49 +49,57 @@ export default function ChatInterface() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    const currentInput = input;
     setInput('');
     setLoading(true);
 
     try {
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-
-      // Add authorization header if user is authenticated
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch('http://localhost:8000/ask', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ query: input }),
+      // Send conversation history to maintain context
+      const conversationHistory = messages
+        .filter(msg => msg.role !== 'assistant' || !msg.content.includes('Hello! I\'m your AI campus assistant'))
+        .map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+      
+      // Add current user message
+      conversationHistory.push({
+        role: 'user',
+        content: currentInput
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to get response');
-      }
-
-      const data = await response.json();
+      const response = await apiClient.chat.ask(currentInput, conversationHistory);
+      const data = response.data;
 
       const assistantMessage: Message = {
         role: 'assistant',
-        content: data.response,
+        content: data.response || data.answer || 'I received your question but couldn\'t generate a response.',
         timestamp: new Date(),
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error sending message:', error);
       const errorMessage: Message = {
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
+        content: error.response?.data?.detail || 'Sorry, I encountered an error. Please try again.',
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleNewChat = () => {
+    setMessages([
+      {
+        role: 'assistant',
+        content: 'Hello! I\'m your AI campus assistant. I can help you with your attendance, marks, fees, timetable, library books, and more. What would you like to know?',
+        timestamp: new Date(),
+      },
+    ]);
+    setInput('');
   };
 
   const quickQuestions = user?.student_data ? [
@@ -98,12 +114,12 @@ export default function ChatInterface() {
   ];
 
   return (
-    <div className="bg-white rounded-2xl shadow-lg border border-gray-100 flex flex-col h-[600px]">
+    <div className="bg-blue-950 rounded-2xl shadow-lg border border-gray-100 flex flex-col h-[600px]">
       {/* Header */}
       <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 rounded-t-2xl">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 bg-white bg-opacity-20 rounded-full flex items-center justify-center backdrop-blur-sm">
+            <div className="h-10 w-10 bg-blue-950 bg-opacity-20 rounded-full flex items-center justify-center backdrop-blur-sm">
               <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
               </svg>
@@ -115,9 +131,23 @@ export default function ChatInterface() {
               </p>
             </div>
           </div>
-          <div className="flex items-center space-x-2">
-            <div className="h-2 w-2 bg-green-400 rounded-full animate-pulse"></div>
-            <span className="text-xs text-blue-100">Online</span>
+          <div className="flex items-center space-x-3">
+            {messages.length > 1 && (
+              <button
+                onClick={handleNewChat}
+                className="flex items-center space-x-1 px-3 py-1.5 bg-blue-950 bg-opacity-20 hover:bg-opacity-30 rounded-full transition-all text-xs font-medium backdrop-blur-sm"
+                title="Start new conversation"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                <span>New Chat</span>
+              </button>
+            )}
+            <div className="flex items-center space-x-2">
+              <div className="h-2 w-2 bg-green-400 rounded-full animate-pulse"></div>
+              <span className="text-xs text-blue-100">Online</span>
+            </div>
           </div>
         </div>
       </div>

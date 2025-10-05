@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { apiClient } from '@/lib/api';
 
 interface AttendanceData {
   total_classes: number;
@@ -10,12 +11,14 @@ interface AttendanceData {
   present: number;
   absent: number;
   late: number;
+  ai_response?: string;
 }
 
 export default function AttendanceCard() {
   const { token, user } = useAuth();
   const [attendance, setAttendance] = useState<AttendanceData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchAttendance = async () => {
@@ -25,18 +28,30 @@ export default function AttendanceCard() {
       }
 
       try {
-        // This will be integrated with the AI agent later
-        // For now, show a placeholder
+        // Fetch attendance directly from database endpoint
+        const response = await apiClient.attendance.getSummary();
+        const data = response.data;
+        
         setAttendance({
-          total_classes: 120,
-          attended: 95,
-          percentage: 79.2,
-          present: 90,
-          absent: 20,
-          late: 5,
+          total_classes: data.total_classes || 0,
+          attended: data.classes_attended || 0,
+          percentage: data.attendance_percentage || 0,
+          present: data.present_count || 0,
+          absent: data.absent_count || 0,
+          late: data.late_count || 0,
         });
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error fetching attendance:', error);
+        setError(error.response?.data?.detail || 'Failed to load attendance data');
+        // Set default values on error
+        setAttendance({
+          total_classes: 0,
+          attended: 0,
+          percentage: 0,
+          present: 0,
+          absent: 0,
+          late: 0,
+        });
       } finally {
         setLoading(false);
       }

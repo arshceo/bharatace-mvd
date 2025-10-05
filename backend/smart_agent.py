@@ -44,6 +44,10 @@ class SuperSmartAgent:
             # Step 1: Analyze the query and determine intent
             intent_analysis = await self._analyze_intent(query, student_context)
             logger.info(f"🧠 Intent Analysis: {intent_analysis['intent']}")
+            logger.info(f"🔧 Requires Tools: {intent_analysis.get('requires_tools', False)}")
+            logger.info(f"📚 Requires RAG: {intent_analysis.get('requires_rag', True)}")
+            if intent_analysis.get('tool_calls'):
+                logger.info(f"🛠️  Tool Calls: {[tc.get('tool') for tc in intent_analysis['tool_calls']]}")
             
             # Step 2: Execute tools if needed
             tool_results = []
@@ -110,14 +114,26 @@ Analyze this query and respond with a JSON object containing:
 For tool calls, use this format:
 {{"tool": "tool_name", "params": {{"param1": "value1", "student_id": "student_id_if_needed"}}}}
 
-Important: If the query is about the student's personal data (attendance, marks, fees, etc.), set requires_tools=true and include appropriate tool calls with the student's ID.
+Important: 
+- If the query is about the student's personal data (attendance, marks, fees, timetable, library), set requires_tools=true and include appropriate tool calls with the student's ID.
+- If the query is about events or workshops, set requires_tools=true and use get_upcoming_events tool (NO student_id needed)
+- For general knowledge questions, use requires_rag=true
 
 Examples:
+Student-Specific (need student_id):
 - "What's my attendance?" -> Use get_student_attendance tool
 - "Show my marks" -> Use get_student_marks tool  
-- "What's my CGPA?" -> Use student context + marks analysis
+- "What's my CGPA?" -> Use calculate_cgpa tool
+- "What's my timetable?" -> Use get_student_timetable tool
+
+Public Queries (NO student_id):
+- "Any events around?" -> Use get_upcoming_events tool
+- "Show me workshops" -> Use get_upcoming_events with event_type="workshop"
+- "AI hackathons?" -> Use search_events with query="AI hackathon"
+
+General Knowledge:
 - "Tell me about courses" -> Use RAG only
-- "Book a library book" -> Use search_books and reserve_book tools
+- "What is BharatAce?" -> Use RAG only
 
 Respond ONLY with valid JSON.
 """
@@ -214,13 +230,18 @@ Intent: {intent.get('intent', 'Unknown')}
 
 Instructions:
 1. Provide a helpful, conversational response
-2. Use the student's name when appropriate
-3. Be specific and actionable
-4. If you have student data, provide detailed analysis
-5. If missing information, suggest what the student can do
-6. Keep the tone friendly and supportive
+2. DO NOT start with greetings like "Hey [name]" or "Hello [name]" - get straight to the answer
+3. Only use the student's name if it's contextually necessary (e.g., "Your attendance, [Name], is...")
+4. Be specific and actionable with data from tools
+5. If you have student data from tools, USE IT to provide detailed, personalized insights
+6. If missing information, suggest what the student can do
+7. Keep responses concise and to the point
+8. Focus on answering the question, not pleasantries
 
-Important: If you have specific student data (from tools), USE IT to provide detailed, personalized insights. Don't say you don't have information if the tools provided it.
+Important: 
+- If you have specific student data (from tools), USE IT to provide detailed answers
+- Don't say you don't have information if the tools provided it
+- Don't repeat greetings in follow-up messages of a conversation
 
 Response:
 """

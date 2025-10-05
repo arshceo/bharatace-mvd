@@ -345,14 +345,19 @@ class KnowledgeItem(BaseModel):
 
 class Question(BaseModel):
     """
-    Model for chatbot questions.
+    Model for chatbot questions with optional conversation history.
     """
     query: str = Field(..., description="The question to ask the AI assistant", min_length=1)
+    conversation_history: Optional[List[dict]] = Field(None, description="Previous conversation messages for context")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "What undergraduate programs does the university offer?"
+                "query": "What undergraduate programs does the university offer?",
+                "conversation_history": [
+                    {"role": "user", "content": "Tell me about your university"},
+                    {"role": "assistant", "content": "BharatAce is a leading institution..."}
+                ]
             }
         }
 
