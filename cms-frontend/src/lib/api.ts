@@ -94,6 +94,8 @@ export const subjects = {
 // Events
 export const events = {
   getAll: () => api.get('/admin/events'),
+  getById: (id: string) => api.get(`/admin/events/${id}`),
+  getParticipants: (id: string) => api.get(`/admin/events/${id}/participants`),
   create: (data: any) => api.post('/admin/events', data),
   update: (id: string, data: any) => api.put(`/admin/events/${id}`, data),
   delete: (id: string) => api.delete(`/admin/events/${id}`),

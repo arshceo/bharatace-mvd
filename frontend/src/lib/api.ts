@@ -82,6 +82,7 @@ export const apiClient = {
   // Events endpoints - Direct database queries (public)
   events: {
     getUpcoming: () => api.get('/student/events/upcoming'),
+    getMyEvents: () => api.get('/student/events/my-events'),
   },
 
   // AI Chat endpoint - For complex questions only

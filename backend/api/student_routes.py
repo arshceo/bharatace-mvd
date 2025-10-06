@@ -237,6 +237,54 @@ async def get_upcoming_events():
         raise HTTPException(status_code=500, detail=f"Error fetching events: {str(e)}")
 
 
+@router.get("/events/my-events")
+async def get_my_events(current_user: AuthUser = Depends(get_current_user)):
+    """Get student's registered events"""
+    supabase = get_supabase_admin()
+    
+    try:
+        # Get student's event registrations with event details
+        registrations_response = supabase.table('event_participation')\
+            .select('*, events(*)')\
+            .eq('student_id', current_user.student_id)\
+            .eq('attendance_status', 'registered')\
+            .order('registration_date', desc=True)\
+            .execute()
+        
+        # Extract event data from registrations
+        registered_events = []
+        upcoming_events = []
+        past_events = []
+        
+        today = date.today()
+        
+        for registration in registrations_response.data:
+            if registration.get('events'):
+                event = registration['events']
+                event['registration_date'] = registration['registration_date']
+                event['registration_id'] = registration['id']
+                
+                # Categorize by date
+                event_date = date.fromisoformat(event['start_date'].split('T')[0])
+                if event_date >= today:
+                    upcoming_events.append(event)
+                else:
+                    past_events.append(event)
+                
+                registered_events.append(event)
+        
+        return {
+            "all_events": registered_events,
+            "upcoming_events": upcoming_events,
+            "past_events": past_events,
+            "total_registered": len(registered_events),
+            "upcoming_count": len(upcoming_events),
+            "past_count": len(past_events)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching registered events: {str(e)}")
+
+
 @router.get("/marks/summary")
 async def get_marks_summary(current_user: AuthUser = Depends(get_current_user)):
     """Get marks summary and CGPA for logged-in student"""

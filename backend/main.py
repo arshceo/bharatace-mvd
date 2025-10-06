@@ -81,6 +81,7 @@ from tools.events_tool import (
     get_upcoming_events,
     get_event_details,
     register_for_event,
+    smart_register_for_event,
     get_student_events,
     search_events
 )
@@ -255,6 +256,12 @@ def initialize_llama_index():
             description="Check if student is cleared for exams based on fee payment status. Requires student_id."
         )
         
+        fee_history_tool = FunctionTool.from_defaults(
+            fn=get_fee_history,
+            name="get_fee_history",
+            description="Get complete payment transaction history for a student with dates, amounts, and payment methods. Use this when student asks 'when did I pay?' or 'show my payment history'. Requires student_id."
+        )
+        
         # Timetable tools
         timetable_tool = FunctionTool.from_defaults(
             fn=get_student_timetable,
@@ -295,9 +302,34 @@ def initialize_llama_index():
         )
         
         register_event_tool = FunctionTool.from_defaults(
-            fn=register_for_event,
+            fn=smart_register_for_event,
             name="register_for_event",
-            description="Register a student for an event. This is an ACTION tool - it modifies data. Requires student_id and event_id."
+            description="""Register a student for an event using EITHER the event name OR event UUID.
+            
+            This is a SMART tool that automatically handles:
+            - Event names (e.g., "Career Guidance Seminar", "AI Workshop")
+            - Event UUIDs (e.g., "7e355e64-9fd2-4fbf-867d-038728018a64")
+            
+            Just pass what you have! The tool will:
+            1. Check if it's a UUID → register directly
+            2. If it's a name → find the event in upcoming events → register with UUID
+            
+            This is an ACTION tool - it modifies data (creates event_participation record).
+            
+            Parameters:
+            - student_id: The student's UUID (required)
+            - event_identifier: Event name OR event UUID (required)
+            
+            Examples:
+            - register_for_event(student_id="...", event_identifier="Career Guidance Seminar")
+            - register_for_event(student_id="...", event_identifier="7e355e64-9fd2-4fbf-867d-038728018a64")
+            - register_for_event(student_id="...", event_identifier="seminar")  # Partial match works!
+            
+            Returns:
+            - success: True/False
+            - message: Confirmation or error message
+            - event_title: Name of the event registered for
+            """
         )
         
         student_events_tool = FunctionTool.from_defaults(
@@ -306,7 +338,7 @@ def initialize_llama_index():
             description="Get all events a student is registered for. Requires student_id."
         )
         
-        logger.info("✅ Wrapped 17 AI tools successfully")
+        logger.info("✅ Wrapped 18 AI tools successfully")
         
         # ============================================================
         # STEP 7: Create ReAct AI Agent
@@ -322,6 +354,7 @@ def initialize_llama_index():
             rank_tool,
             fees_tool,
             fee_clearance_tool,
+            fee_history_tool,  # Added fee history tool
             timetable_tool,
             next_class_tool,
             search_books_tool,

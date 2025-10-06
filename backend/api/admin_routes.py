@@ -51,9 +51,13 @@ class AttendanceCreate(BaseModel):
 class FeeCreate(BaseModel):
     student_id: str
     semester: int
-    amount: float
+    academic_year: str
+    total_amount: float
+    amount_paid: Optional[float] = 0.00
     due_date: date
-    status: str  # paid, partial, overdue
+    payment_status: str = 'pending'  # pending, partial, paid, overdue
+    late_fee: Optional[float] = 0.00
+    remarks: Optional[str] = None
 
 class PaymentRecord(BaseModel):
     amount: float
@@ -61,11 +65,14 @@ class PaymentRecord(BaseModel):
     payment_method: Optional[str] = "cash"
 
 class SubjectCreate(BaseModel):
-    name: str
-    code: str
+    subject_name: str
+    subject_code: str
     semester: int
     credits: int
-    branch: Optional[str] = None
+    department: Optional[str] = None
+    description: Optional[str] = None
+    instructor_name: Optional[str] = None
+    instructor_email: Optional[str] = None
 
 class EventCreate(BaseModel):
     title: str
@@ -123,7 +130,7 @@ async def get_student(student_id: str):
     student = student_response.data[0]
     
     # Get marks
-    marks_response = supabase.table('marks').select('*, subjects(name, code)').eq('student_id', student_id).execute()
+    marks_response = supabase.table('marks').select('*, subjects(subject_name, subject_code)').eq('student_id', student_id).execute()
     
     # Get attendance
     attendance_response = supabase.table('attendance').select('*').eq('student_id', student_id).execute()
@@ -202,7 +209,7 @@ async def get_all_marks(student_id: Optional[str] = None, subject_id: Optional[s
     """Get all marks with optional filters"""
     supabase = get_supabase_admin()
     
-    query = supabase.table('marks').select('*, students(first_name, last_name, roll_number), subjects(name, code)')
+    query = supabase.table('marks').select('*, students(full_name, roll_number, department, semester), subjects(subject_name, subject_code)')
     
     if student_id:
         query = query.eq('student_id', student_id)
@@ -284,7 +291,7 @@ async def get_all_attendance(
     """Get all attendance records with optional filters"""
     supabase = get_supabase_admin()
     
-    query = supabase.table('attendance').select('*, students(first_name, last_name, roll_number), subjects(name, code)')
+    query = supabase.table('attendance').select('*, students(first_name, last_name, roll_number), subjects(subject_name, subject_code)')
     
     if student_id:
         query = query.eq('student_id', student_id)
@@ -355,31 +362,43 @@ async def get_all_fees(
     """Get all fee records with optional filters"""
     supabase = get_supabase_admin()
     
-    query = supabase.table('fees').select('*, students(first_name, last_name, roll_number)')
+    # Updated to include full_name and roll_number from schema_update.sql
+    query = supabase.table('fees').select('*, students(first_name, last_name, full_name, roll_number, student_id, email)')
     
     if student_id:
         query = query.eq('student_id', student_id)
     if status:
-        query = query.eq('status', status)
+        query = query.eq('payment_status', status)
     if semester:
         query = query.eq('semester', semester)
     
     response = query.execute()
-    return {"fees": response.data}
+    
+    # Process the data to flatten student information
+    fees = []
+    for fee in response.data:
+        student_info = fee.get('students', {})
+        fee_copy = {k: v for k, v in fee.items() if k != 'students'}
+        
+        # Add flattened student fields
+        fee_copy['student_name'] = student_info.get('full_name')
+        fee_copy['full_name'] = student_info.get('full_name')
+        fee_copy['first_name'] = student_info.get('first_name')
+        fee_copy['last_name'] = student_info.get('last_name')
+        fee_copy['roll_number'] = student_info.get('roll_number')
+        fee_copy['enrollment_number'] = student_info.get('roll_number')  # Alias for compatibility
+        
+        fees.append(fee_copy)
+    
+    return {"fees": fees}
 
 @router.post("/fees")
 async def create_fee(fee: FeeCreate):
     """Create fee record"""
     supabase = get_supabase_admin()
     
-    fee_data = {
-        "student_id": fee.student_id,
-        "semester": fee.semester,
-        "amount": fee.amount,
-        "due_date": str(fee.due_date),
-        "status": fee.status,
-        "paid_amount": 0
-    }
+    fee_data = fee.dict()
+    fee_data['due_date'] = str(fee.due_date)
     
     response = supabase.table('fees').insert(fee_data).execute()
     return {"fee": response.data[0]}
@@ -395,10 +414,10 @@ async def record_payment(fee_id: str, payment: PaymentRecord):
         raise HTTPException(status_code=404, detail="Fee record not found")
     
     fee = fee_response.data[0]
-    new_paid_amount = fee.get('paid_amount', 0) + payment.amount
+    new_paid_amount = fee.get('amount_paid', 0) + payment.amount
     
     # Determine new status
-    if new_paid_amount >= fee['amount']:
+    if new_paid_amount >= fee['total_amount']:
         new_status = 'paid'
     elif new_paid_amount > 0:
         new_status = 'partial'
@@ -407,8 +426,8 @@ async def record_payment(fee_id: str, payment: PaymentRecord):
     
     # Update fee
     update_response = supabase.table('fees').update({
-        'paid_amount': new_paid_amount,
-        'status': new_status
+        'amount_paid': new_paid_amount,
+        'payment_status': new_status
     }).eq('id', fee_id).execute()
     
     return {"fee": update_response.data[0]}
@@ -481,16 +500,30 @@ async def delete_subject(subject_id: str):
 
 @router.get("/events")
 async def get_all_events(event_type: Optional[str] = None):
-    """Get all events"""
+    """Get all events with participant counts"""
     supabase = get_supabase_admin()
     
-    query = supabase.table('events').select('*').order('event_date', desc=True)
+    # Get events with participant count
+    query = supabase.table('events').select('*, event_participation(count)').order('start_date', desc=True)
     
     if event_type:
         query = query.eq('event_type', event_type)
     
     response = query.execute()
-    return {"events": response.data}
+    
+    # Process data to add registered_count
+    events = []
+    for event in response.data:
+        # Extract participant count from the nested query result
+        participant_data = event.get('event_participation', [])
+        registered_count = participant_data[0].get('count', 0) if participant_data else 0
+        
+        # Remove the nested event_participation and add registered_count
+        event_copy = {k: v for k, v in event.items() if k != 'event_participation'}
+        event_copy['registered_count'] = registered_count
+        events.append(event_copy)
+    
+    return {"events": events}
 
 @router.post("/events")
 async def create_event(event: EventCreate):
@@ -533,6 +566,37 @@ async def delete_event(event_id: str):
         raise HTTPException(status_code=404, detail="Event not found")
     
     return {"message": "Event deleted successfully"}
+
+@router.get("/events/{event_id}/participants")
+async def get_event_participants(event_id: str):
+    """Get all participants for a specific event with student details"""
+    supabase = get_supabase_admin()
+    
+    # Get event participation with student details
+    response = supabase.table('event_participation')\
+        .select('*, students(id, roll_number, full_name, first_name, last_name, email, semester, course)')\
+        .eq('event_id', event_id)\
+        .execute()
+    
+    # Process the data to flatten student information
+    participants = []
+    for participation in response.data:
+        student = participation.get('students', {})
+        participant = {
+            'id': participation.get('id'),
+            'event_id': participation.get('event_id'),
+            'student_id': participation.get('student_id'),
+            'registration_date': participation.get('registration_date'),
+            'attendance_status': participation.get('attendance_status'),
+            'student_name': student.get('full_name') or f"{student.get('first_name', '')} {student.get('last_name', '')}".strip() or 'Unknown',
+            'roll_number': student.get('roll_number') or 'N/A',
+            'email': student.get('email'),
+            'semester': student.get('semester'),
+            'course': student.get('course')
+        }
+        participants.append(participant)
+    
+    return {"participants": participants}
 
 
 # ================== Library Management ==================
@@ -658,9 +722,9 @@ async def get_dashboard_stats():
     
     # Fee collection - using correct column names
     try:
-        fees_response = supabase.table('fees').select('total_amount, paid_amount').execute()
+        fees_response = supabase.table('fees').select('total_amount, amount_paid').execute()
         total_fees = sum(f['total_amount'] for f in fees_response.data)
-        collected_fees = sum(f.get('paid_amount', 0) for f in fees_response.data)
+        collected_fees = sum(f.get('amount_paid', 0) for f in fees_response.data)
         collection_rate = (collected_fees / total_fees * 100) if total_fees > 0 else 0
     except:
         total_fees = 0
@@ -742,14 +806,14 @@ async def get_fee_collection():
     supabase = get_supabase_admin()
     
     try:
-        fees_response = supabase.table('fees').select('semester, total_amount, paid_amount').execute()
+        fees_response = supabase.table('fees').select('semester, total_amount, amount_paid').execute()
         
         # Group by semester
         semester_fees = {}
         for fee in fees_response.data:
             sem = fee.get('semester', 0)
             total = fee.get('total_amount', 0)
-            paid = fee.get('paid_amount', 0)
+            paid = fee.get('amount_paid', 0)
             
             if sem not in semester_fees:
                 semester_fees[sem] = {'total': 0, 'collected': 0}
@@ -771,30 +835,6 @@ async def get_fee_collection():
     except Exception as e:
         # Return empty if fees table doesn't exist or has no data
         return {"collection": []}
-    
-    # Group by semester
-    from collections import defaultdict
-    semester_collection = defaultdict(lambda: {"total": 0, "collected": 0, "pending": 0})
-    
-    for fee in fees_response.data:
-        semester = fee['semester']
-        semester_collection[semester]["total"] += fee['amount']
-        semester_collection[semester]["collected"] += fee.get('paid_amount', 0)
-        semester_collection[semester]["pending"] += fee['amount'] - fee.get('paid_amount', 0)
-    
-    # Format result
-    result = []
-    for semester, data in sorted(semester_collection.items()):
-        collection_rate = (data["collected"] / data["total"] * 100) if data["total"] > 0 else 0
-        result.append({
-            "semester": semester,
-            "total_fees": data["total"],
-            "collected": data["collected"],
-            "pending": data["pending"],
-            "collection_rate": round(collection_rate, 2)
-        })
-    
-    return {"collection": result}
 
 
 # ================== Helper Functions ==================

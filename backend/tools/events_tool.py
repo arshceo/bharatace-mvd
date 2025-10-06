@@ -267,7 +267,7 @@ def register_for_event(student_id: str, event_id: str) -> Dict[str, Any]:
         
         return {
             "success": True,
-            "message": f"Successfully registered for '{event['title']}'!",
+            "message": f"Successfully registered for '{event['title']}'! Your registration has been saved in the system.",
             "event_details": {
                 "title": event['title'],
                 "event_type": event['event_type'],
@@ -275,7 +275,8 @@ def register_for_event(student_id: str, event_id: str) -> Dict[str, Any]:
                 "location": event['location'],
                 "organizer": event['organizer']
             },
-            "registration_id": registration_data['id']
+            "registration_id": registration_data['id'],
+            "note": "You can view this event in 'My Events' section. No email confirmation is sent - check the app for details."
         }
         
     except Exception as e:
@@ -469,5 +470,100 @@ def search_events(
             "events": [],
             "success": False,
             "error": str(e)
+        }
+
+
+def smart_register_for_event(student_id: str, event_identifier: str) -> Dict[str, Any]:
+    """
+    Smart event registration that handles both event names and UUIDs.
+    
+    This is a wrapper around register_for_event that automatically:
+    1. Accepts either event name (e.g., "Career Guidance Seminar") or UUID
+    2. If it's a name, searches upcoming events to find the matching event
+    3. Extracts the UUID and registers the student
+    
+    This is an ACTION tool - it writes data.
+    
+    Args:
+        student_id: The student's database ID (UUID)
+        event_identifier: Either the event name or event UUID
+        
+    Returns:
+        Dictionary with registration confirmation
+        
+    Example:
+        smart_register_for_event("student-uuid", "Career Guidance Seminar")
+        smart_register_for_event("student-uuid", "7e355e64-9fd2-4fbf-867d-038728018a64")
+    """
+    try:
+        # Check if event_identifier is already a UUID
+        try:
+            uuid.UUID(event_identifier)
+            # It's a valid UUID, use it directly
+            logger.info(f"Event identifier is UUID: {event_identifier}")
+            return register_for_event(student_id, event_identifier)
+        except ValueError:
+            # It's not a UUID, treat as event name
+            logger.info(f"Event identifier is name: {event_identifier}")
+            pass
+        
+        # Get upcoming events
+        upcoming = get_upcoming_events()
+        
+        if not upcoming['success'] or not upcoming['events']:
+            return {
+                "success": False,
+                "message": "No upcoming events found"
+            }
+        
+        # Find matching event by name (case-insensitive, partial match)
+        event_identifier_lower = event_identifier.lower()
+        matching_events = []
+        
+        for event in upcoming['events']:
+            event_title = event.get('title', '').lower()
+            if event_identifier_lower in event_title or event_title in event_identifier_lower:
+                matching_events.append(event)
+        
+        if not matching_events:
+            # Try to provide helpful suggestions
+            available_events = [e.get('title') for e in upcoming['events'][:5]]
+            return {
+                "success": False,
+                "message": f"No event found matching '{event_identifier}'. Available events: {', '.join(available_events)}"
+            }
+        
+        if len(matching_events) > 1:
+            # Multiple matches - ask user to be more specific
+            titles = [e.get('title') for e in matching_events]
+            return {
+                "success": False,
+                "message": f"Multiple events match '{event_identifier}': {', '.join(titles)}. Please be more specific."
+            }
+        
+        # Exactly one match - proceed with registration
+        event = matching_events[0]
+        event_id = event['id']
+        event_title = event['title']
+        
+        logger.info(f"Found matching event: '{event_title}' (ID: {event_id})")
+        
+        # Call the actual registration function
+        result = register_for_event(student_id, event_id)
+        
+        # Enhance the response with clear, accurate information
+        if result.get('success'):
+            result['event_title'] = event_title
+            result['message'] = f"✅ Successfully registered for '{event_title}'! Your registration has been saved in the system."
+            result['note'] = "You can view this event in your 'My Events' section."
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in smart event registration: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": f"Registration failed: {str(e)}"
         }
 

@@ -16,6 +16,8 @@ export default function LoginModal({ onLogin }: LoginModalProps) {
     e.preventDefault();
     setIsLoading(true);
 
+    console.log('🔐 Attempting login with:', email);
+
     try {
       // Call backend ADMIN login API
       const response = await fetch("http://localhost:8000/admin/login", {
@@ -32,6 +34,10 @@ export default function LoginModal({ onLogin }: LoginModalProps) {
         // Store admin token and auth status
         sessionStorage.setItem("admin_token", data.access_token);
         sessionStorage.setItem("bharatace_authenticated", "true");
+        
+        console.log('✅ Login successful! Token saved to sessionStorage');
+        console.log('✅ You can now access all CMS pages');
+        console.log('📊 Caching system is active - pages will load instantly');
         
         toast.success(`Welcome ${data.admin?.full_name || "Admin"}! Logging in...`);
         onLogin();
